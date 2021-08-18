@@ -4,6 +4,11 @@
   "info": {
     "name": "MuxAsset"
   },
+  "pluginOptions": {
+    "content-manager": {
+      "visible": false
+    }
+  },
   "options": {
     "increments": true,
     "timestamps": true
@@ -27,6 +32,11 @@
       "maxLength": 255
     },
     "playback_id": {
+      "type": "string",
+      "required": false,
+      "maxLength": 255
+    },
+    "error_message": {
       "type": "string",
       "required": false,
       "maxLength": 255

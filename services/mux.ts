@@ -1,46 +1,78 @@
-import _ from 'lodash';
+import axios from 'axios';
 
-const NAME = 'mux';
-const CONFIG_KEY = 'config';
+import { getConfig } from "./strapi";
 
-const getStore = () => strapi.store({
-  environment: strapi.config.environment,
-  type: 'plugin',
-  name: NAME,
-});
+const getAssetIdByUploadId = async (uploadId:string) => {
+  const config = await getConfig('general');
 
-function configKey(key:string) { return `${CONFIG_KEY}_${key}` };
-
-const deleteConfig = (key:string) => strapi.query('core_store').delete(
-  { key: `plugin_${NAME}_${CONFIG_KEY}_${key}` });
-
-const getConfig = async (key:string) => (await getStore().get({ key: configKey(key) })) || {};
-
-const setConfig = async (key:string, value:any) => {
-  const storedConfig = (await getStore().get({ key: configKey(key) })) || {};
-
-  const currentConfig = { ...storedConfig };
-  
-  Object.keys(value).forEach((key:string) => {
-    if (value[key] !== null && value[key] !== undefined) {
-      _.set(currentConfig, key, value[key]);
-    }
+  const result = await axios(`https://api.mux.com/video/v1/assets`, {
+    params: {
+      upload_id: uploadId
+    },
+    auth: {
+      username: config.access_token,
+      password: config.secret_key
+    },
+    headers: { 'Content-Type': 'application/json' }
   });
 
-  if (!_.isEqual(currentConfig, storedConfig)) { 
-    getStore().set({
-      key: configKey(key),
-      value: currentConfig,
-    });
+  return result.data.data[0].id;
+};
 
-    return true;
-  }
+const getDirectUploadUrl = async (corsOrigin:string = "*") => {
+  const config = await getConfig('general');
 
-  return false;
+  const result = await axios({
+    url: 'https://api.mux.com/video/v1/uploads',
+    method: "post",
+    auth: {
+      username: config.access_token,
+      password: config.secret_key
+    },
+    headers: { 'Content-Type': 'application/json' },
+    data: { "cors_origin": corsOrigin, "new_asset_settings": { "playback_policy": ["public"] } }
+  });
+
+  return result.data.data;
+}
+
+const createAsset = async (url:string, ) => {
+  const config = await getConfig('general');
+
+  const body = { "input": url, "playback_policy": ["public"] };
+
+  const result = await axios('https://api.mux.com/video/v1/assets', {
+    method: "post",
+    validateStatus: () => true,
+    auth: {
+      username: config.access_token,
+      password: config.secret_key
+    },
+    headers: { 'Content-Type': 'application/json' },
+    data: body
+  });
+
+  return result.data.data;
+};
+
+const deleteAsset = async (assetId:string) => {
+  const config = await getConfig('general');
+  
+  const muxResult = await axios(`https://api.mux.com/video/v1/assets/${assetId}`, {
+    method: "delete",
+    auth: {
+      username: config.access_token,
+      password: config.secret_key
+    },
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+  return muxResult.status === 204;
 };
 
 export {
-  deleteConfig,
-  getConfig,
-  setConfig
+  getAssetIdByUploadId,
+  getDirectUploadUrl,
+  createAsset,
+  deleteAsset
 };

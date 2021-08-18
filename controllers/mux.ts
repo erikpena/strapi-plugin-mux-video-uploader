@@ -2,7 +2,8 @@ import axios from 'axios';
 import Mux from '@mux/mux-node';
 import { Context } from 'koa';
 
-import { getConfig } from '../services/mux';
+import { createAsset, deleteAsset, getAssetIdByUploadId, getDirectUploadUrl } from '../services/mux';
+import { getConfig } from '../services/strapi';
 import pluginId from './../admin/src/pluginId';
 
 const { Webhooks } = Mux;
@@ -14,34 +15,17 @@ const index = async (ctx:Context) => ctx.send({ message: 'ok' });
 const submitDirectUpload = async (ctx:Context) => {
   const data = ctx.request.body;
 
-  const config = await getConfig('general');
+  const result = await getDirectUploadUrl(ctx.request.header.origin);
 
-  const result = await axios({
-    url: 'https://api.mux.com/video/v1/uploads',
-    method: "post",
-    auth: {
-      username: config.access_token,
-      password: config.secret_key
-    },
-    headers: { 'Content-Type': 'application/json' },
-    data: { "cors_origin": ctx.request.header.origin, "new_asset_settings": { "playback_policy": ["public"] } }
-  });
-
-  const body = result.data.data;
-
-  data.upload_id = body.id;
+  data.upload_id = result.id;
 
   await strapi.entityService.create({ data }, { model });
 
-  ctx.send(body);
+  ctx.send(result);
 };
 
 const submitRemoteUpload = async (ctx:Context) => {
   const data = ctx.request.body;
-
-  const config = await getConfig('general');
-
-  const body = { "input": data.url, "playback_policy": ["public"] };
 
   if(!data.url) {
     ctx.badRequest("ValidationError", { errors: { "url": ["url cannot be empty"]}});
@@ -49,24 +33,37 @@ const submitRemoteUpload = async (ctx:Context) => {
     return;
   }
 
-  // @ts-ignore
-  const result = await axios({
-    url: 'https://api.mux.com/video/v1/assets',
-    method: "post",
-    validateStatus: false,
-    auth: {
-      username: config.access_token,
-      password: config.secret_key
-    },
-    headers: { 'Content-Type': 'application/json' },
-    data: body
-  });
+  const result = await createAsset(data.url);
 
-  data.asset_id = result.data.data.id;
+  data.asset_id = result.id;
 
   const response = await strapi.entityService.create({ data }, { model });
 
   ctx.send(response);
+};
+
+const deleteMuxAsset = async (ctx:Context) => {
+  const data = ctx.request.body;
+
+  if(!data.upload_id) {
+    ctx.badRequest("ValidationError", { errors: { "upload_id": ["upload_id needs to be defined"]}});
+
+    return;
+  }
+
+  strapi.entityService.delete({ params: { id: data.id } }, { model });
+
+  const result = { success: true, deletedOnMux: false };
+
+  if(data.delete_on_mux === "true") {
+    const assetId = data.asset_id !== '' ? data.asset_id : await getAssetIdByUploadId(data.upload_id);
+
+    const deletedOnMux = await deleteAsset(assetId);
+
+    result.deletedOnMux = deletedOnMux;
+  }
+
+  ctx.send(result);
 };
 
 const muxWebhookHandler = async (ctx:Context) => {
@@ -123,6 +120,14 @@ const muxWebhookHandler = async (ctx:Context) => {
         isReady: true
       }
     };
+  } else if(type === 'video.asset.errored') {
+    payload = {
+      params: { upload_id: data.upload_id },
+      data: {
+        asset_id: data.id,
+        error_message: `${data.errors.type}: ${data.errors.messages[0] || ''}`
+      }
+    };
   } else {
     ctx.send('ignored');
 
@@ -138,5 +143,6 @@ export {
   index,
   submitDirectUpload,
   submitRemoteUpload,
+  deleteMuxAsset,
   muxWebhookHandler
 };

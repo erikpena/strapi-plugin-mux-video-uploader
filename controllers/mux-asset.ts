@@ -6,6 +6,14 @@ import pluginId from './../admin/src/pluginId';
 
 const model = `plugins::${pluginId}.mux-asset`;
 
+const search = (ctx:Context) => {
+  if (ctx.query._q) {
+    return strapi.entityService.search({params: ctx.query}, { model });
+  }
+
+  return strapi.entityService.find({params: ctx.query}, { model });
+}
+
 const index = async (ctx:Context) => {
   ctx.send({
     message: 'ok'
@@ -13,15 +21,15 @@ const index = async (ctx:Context) => {
 };
 
 const find = async (ctx:Context) => {
-  let entities;
+  const entities = await search(ctx);
+  const totalCount = await count(ctx);
 
-  if (ctx.query._q) {
-    entities = await strapi.entityService.search({params: ctx.query}, { model });
-  } else {
-    entities = await strapi.entityService.find({params: ctx.query}, { model });
-  }
+  const items = entities.map((entity:any) => sanitizeEntity(entity, {model: { options: {}, attributes:[]}}));
 
-  return entities.map((entity:any) => sanitizeEntity(entity, {model: { options: {}, attributes:[]}}));
+  return {
+    items,
+    totalCount
+  };
 };
 
 const findOne = async (ctx:Context) => {

@@ -1,7 +1,7 @@
 import { pick, isEmpty } from 'lodash';
 import { Context } from 'koa';
 
-import { setConfig, getConfig, deleteConfig } from "../services/mux";
+import { setConfig, getConfig, deleteConfig } from "../services/strapi";
 
 const isConfiged = async (ctx:Context) => {
   const config = await getConfig('general');

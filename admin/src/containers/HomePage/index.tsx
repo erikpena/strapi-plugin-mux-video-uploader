@@ -1,105 +1,214 @@
 import React from 'react';
+import { Button, InputText, Select } from '@buffetjs/core';
+import { GlobalPagination } from 'strapi-helper-plugin';
 import styled from 'styled-components';
-import { createUpload } from '@mux/upchunk';
+import { DebouncedFunc } from 'lodash';
+import debounce from 'lodash.debounce';
 
-import Well from '../../components/well';
-import Header from '../../components/header';
-import Form from '../../components/form';
-import Uploading from '../../components/uploading';
-import Uploaded from '../../components/uploaded';
 import SetupNeeded from '../../components/setup-needed';
-import { getIsConfigured, submitUpload } from '../../services/strapi';
+import { getIsConfigured, getMuxAssets } from '../../services/strapi';
+import Layout from '../Layout';
+import AssetGrid from '../../components/asset-grid';
+import { GetMuxAssetsResponse, MuxAsset } from '../../../../models/mux-asset';
+import { SearchField, SearchVector, SortVector } from '../../services/strapi/types';
+import ModalDetails from '../../components/modal-details';
+import usePrevious from '../../utils/use-previous';
+import ModalNewUpload from '../../components/modal-new-upload';
 
-const ContainerStyled = styled.div`
-  padding: 3.1rem 2.5rem 0 2.5rem;
+const SEARCH_FIELDS = [{ 
+  label: 'By Title',
+  value: SearchField.BY_TITLE,
+}, {
+  label: 'By Asset Id',
+  value: SearchField.BY_ASSET_ID
+}] as const;
+
+const ControlsContainer = styled.div`
+  margin-top: 20px;
+  margin-bottom: 30px;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+`;
+
+const SearchContainer = styled.div`
+  display: flex;
+
+  @media screen and (max-width: 944px) {
+    width: 100%;
+  }
+
+  @media screen and (min-width: 945px) {
+    flex: 1;
+  }
+
+  & > * {
+    margin-bottom: 30px;
+    margin-right: 1rem;
+    flex: 1;
+  }
+`;
+
+const NewUploadButtonContainer = styled.div`
+  display: flex;
+  flex: 1;
+  justify-content: flex-end;
+  align-items: center;
+  padding-left: 1rem;
+  margin-bottom: 30px;
+
+  @media screen and (max-width: 839px) {
+    width: 100%;
+  }
+
+  @media screen and (min-width: 840px) {
+    flex: 1;
+  }
 `;
 
 const HomePage = () => {
-  const formRef = React.useRef<React.ElementRef<typeof Form>>(null);
+  const [isReady, setIsReady] = React.useState<boolean>(false);
+  const [hasLoaded, setHasLoaded] = React.useState<boolean>(false);
+  const [muxAssets, setMuxAssets] = React.useState<GetMuxAssetsResponse|undefined>();
+  const [selectedAsset, setSelectedAsset] = React.useState<MuxAsset|undefined>();
+  const [isNewUploadOpen, setIsNewUploadOpen] = React.useState<boolean>(false);
 
-  const [isReady, setIsReady] = React.useState<boolean|undefined>();
-  const [isSubmitting, setIsSubmitting] = React.useState<boolean>(false);
-  const [uploadPercent, setUploadPercent] = React.useState<number>();
-  const [isComplete, setIsComplete] = React.useState<boolean>(false);
-  const [uploadError, setUploadError] = React.useState<string>();
+  const [searchField, setSearchField] = React.useState<SearchField>(SEARCH_FIELDS[0].value);
+  const [searchValue, setSearchValue] = React.useState<string|undefined>(undefined);
+  const [pageLimit] = React.useState<number>(20);
+  const [pageStart, setPageStart] = React.useState<number>(0);
+
+  const prevSearchField = usePrevious(searchField);
+  const prevSearchValue = usePrevious(searchValue);
+  const prevPageLimit = usePrevious(pageLimit);
+  const prevPageStart = usePrevious(pageStart);
+
+  const loadMuxAssets = async () => {
+    let searchVector:SearchVector|undefined = undefined;
+
+    if(searchValue !== undefined) {
+      searchVector = {
+        field: searchField,
+        value: searchValue
+      };
+    }
+
+    const sortVector:SortVector = { field: 'created_at', desc: true };
+
+    const start = pageStart * pageLimit;
+
+    const data = await getMuxAssets(searchVector, sortVector, start, pageLimit);
+    
+    setMuxAssets(data);
+  }
+
+  const loadMuxAssetsDebounced:DebouncedFunc<any> = debounce(loadMuxAssets, 300);
 
   React.useEffect(() => {
     getIsConfigured().then(data => {
       setIsReady(data === true);
-
-      if(!data) setIsSubmitting(true);
     });
+
+    () => loadMuxAssetsDebounced.cancel();
   }, []);
 
-  const uploadFile = (endpoint:string, file:File) => {
-    setUploadPercent(0);
+  React.useEffect(() => {
+    if(!isReady) return;
+
+    if(
+      !hasLoaded ||
+      (prevSearchField !== searchField && searchValue !== undefined) ||
+      prevSearchValue !== searchValue ||
+      prevPageStart !== pageStart ||
+      prevPageLimit !== pageLimit
+    ) {
+      loadMuxAssetsDebounced();
+
+      setHasLoaded(true);
+    }
+  }, [isReady, searchField, searchValue, pageStart, pageLimit]);
+
+  const handleOnSearchFieldChange = (event:any) => {
+    const field = event?.target.value === '' ? undefined : event?.target.value;
+
+    if(field !== undefined && field !== searchField) {
+      setPageStart(0);
+    }
+
+    setSearchField(field);
+  };
+
+  const handleOnSearchValueChange = (event:any) => {
+    const value = event?.target.value === '' ? undefined : event?.target.value;
     
-    const uploadTask = createUpload({ endpoint, file });
-
-    uploadTask.on('error', (err) => setUploadError(err.detail));
-
-    uploadTask.on('progress', (progressEvt) => setUploadPercent(Math.floor(progressEvt.detail)));
-
-    uploadTask.on('success', () => setIsComplete(true));
-  }
-
-  const handleOnClick = React.useCallback(() => formRef.current?.submit(), []);
-
-  const handleOnSubmit = React.useCallback(async (title, uploadMethod, media) => {
-    setIsSubmitting(true);
-
-    let result;
+    setSearchValue(value);
     
-    try {
-      result = await submitUpload(title, uploadMethod, media);
-    } catch(error) {
-      setUploadError(error);
-
-      return;
+    if(value !== undefined && value !== searchValue) {
+      setPageStart(0);
     }
+  };
+  
+  const handleOnMuxAssetClick = (muxAsset:MuxAsset) => setSelectedAsset(muxAsset);
 
-    const { statusCode, data } = result;
-
-    if(statusCode && statusCode !== 200) {
-      setIsSubmitting(false);
-
-      return data?.errors;
-    } else if(uploadMethod === "upload") {
-      uploadFile(result.url, media);
-    } else {
-      setUploadPercent(100);
-      setIsComplete(true);
-    }
-  }, []);
-
-  const handleOnReset = () => {
-    setIsSubmitting(false);
-    setUploadPercent(undefined);
-    setIsComplete(false);
-    setUploadError(undefined);
+  const handleOnDetailsClose = (refresh?:boolean) => {
+    setSelectedAsset(undefined);
+    if(!refresh) return;
+    loadMuxAssets();
   }
 
-  const renderBody = () => {
-    if(!isReady) {
-      return (<SetupNeeded />);
-    } else if(isComplete) {
-      return (<Uploaded onReset={handleOnReset} />);
-    } else if(uploadPercent !== undefined) {
-      return (<Uploading percent={uploadPercent} />);
-    } else {
-      return (<Form ref={formRef} onSubmit={handleOnSubmit} />);
-    }
+  const handleOnNewUploadClose = (refresh:boolean) => {
+    setIsNewUploadOpen(false);
+    if(!refresh) return;
+    loadMuxAssets();
   }
 
-  if(isReady === undefined) return null;
+  const handleOnNewUploadClick = () => setIsNewUploadOpen(true);
+
+  const handleOnPaginateChange = ({ target }: { target: { value: number }}) => {
+    setPageStart(target.value - 1);
+    loadMuxAssets();
+  };
+
+  if(!isReady) return <SetupNeeded />;
 
   return (
-    <ContainerStyled>
-      <Header onSubmitClick={handleOnClick} disableSubmit={isSubmitting} />
-      <Well>
-        {renderBody()}
-      </Well>
-    </ContainerStyled>
+    <Layout>
+      <div>
+        <ControlsContainer>
+          <SearchContainer>
+            <Select
+              options={SEARCH_FIELDS}
+              value={searchField}
+              onChange={handleOnSearchFieldChange}
+            />
+            <InputText
+              placeholder="Search text"
+              type="text"
+              value={searchValue}
+              onChange={handleOnSearchValueChange}
+            />
+          </SearchContainer>
+          <NewUploadButtonContainer>
+            <Button color="primary" label="New Upload" onClick={handleOnNewUploadClick} />
+          </NewUploadButtonContainer>
+        </ControlsContainer>
+        <AssetGrid muxAssets={muxAssets?.items} onMuxAssetClick={handleOnMuxAssetClick} />
+        <GlobalPagination
+          count={muxAssets?.totalCount}
+          params={{_page: pageStart + 1, _limit: pageLimit}}
+          onChangeParams={handleOnPaginateChange}
+        />
+        <ModalDetails 
+          isOpen={selectedAsset !== undefined}
+          muxAsset={selectedAsset}
+          onToggle={handleOnDetailsClose}
+        />
+        <ModalNewUpload
+          isOpen={isNewUploadOpen}
+          onToggle={handleOnNewUploadClose}
+        />
+      </div>
+    </Layout>
   );
 };
 
